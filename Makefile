@@ -1,23 +1,17 @@
-# Subir com Docker
-up:
-	docker compose up -d
-
-# Rodar a API local (sem docker)
-run:
-	go run main.go
-
-# Rodar testes
-test:
-	go test ./...
-
-# Instalar dependências
-tidy:
-	go mod tidy
-
-# Build manual (opcional)
+# build binário local
 build:
-	go build -o main .
+	go build -o bin/user-api ./cmd/user-api
 
-# Limpar binários
-clean:
-	rm -f main
+# rodar local (sem docker)
+run:
+	PORT=8088 MONGO_URI=mongodb://localhost:27017 go run ./cmd/user-api
+
+# docker compose
+up:
+	docker compose up --build
+
+down:
+	docker compose down
+
+logs:
+	docker compose logs -f user-api
