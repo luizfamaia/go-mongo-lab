@@ -1,47 +1,86 @@
-name: Deploy no Cloud Run
+name: CI & CD
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
 
 env:
-  PROJECT_ID: seu-projeto-id
-  REGION: us-central1 # ajuste para sua região (ex: southamerica-east1)
-  SERVICE_NAME: nome-do-servico
-  IMAGE: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/meu-repo/meu-image:latest
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  REGION: ${{ secrets.GCP_REGION }}
+  ARTIFACT_REPO: ${{ secrets.ARTIFACT_REPO || 'go-microservices' }}
+  SERVICE_NAME: ${{ secrets.SERVICE_NAME || 'user-api' }}
+  # <region>-docker.pkg.dev/<project>/<repo>/<service>:<sha>
+  IMAGE: ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.ARTIFACT_REPO || 'go-microservices' }}/${{ secrets.SERVICE_NAME || 'user-api' }}:${{ github.sha }}
 
-permissions:
-  contents: read
-  id-token: write
-  packages: write
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  deploy:
+  test:
     runs-on: ubuntu-latest
+
+    services:
+      mongo:
+        image: mongo:5.0
+        options: >-
+          --health-cmd="mongosh --eval 'db.adminCommand(\"ping\")'"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Rodar testes
+        run: go test ./...
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Autentica com a service account (mesma do seu secret)
       - name: Auth no GCP (service account key)
         uses: google-github-actions/auth@v2
         with:
-          credentials_json: '${{ secrets.GCP_SA_KEY }}'
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
 
+      # Instala gcloud e define o projeto
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ env.PROJECT_ID }}
-          install_components: 'beta'
           version: 'latest'
 
+      # Configura o Docker para fazer push no Artifact Registry
       - name: Configurar Docker para Artifact Registry
-        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+        run: |
+          gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
 
-      - name: Build & Push (Cloud Build)
-        run: gcloud builds submit --tag "${IMAGE}"
+      # Build local no runner + push (evita Cloud Build/_cloudbuild)
+      - name: Docker build
+        run: docker build -t "${IMAGE}" .
 
+      - name: Docker push
+        run: docker push "${IMAGE}"
+
+      # Deploy no Cloud Run (mantém as envs já configuradas lá, ex: MONGO_URI)
       - name: Deploy no Cloud Run
         run: |
           gcloud run deploy "${SERVICE_NAME}" \
@@ -50,7 +89,6 @@ jobs:
             --platform managed \
             --allow-unauthenticated \
             --quiet
-          echo "URL do serviço:"
-          gcloud run services describe "${SERVICE_NAME}" \
-            --region "${REGION}" \
-            --format="value(status.url)"
+
+      - name: Mostrar URL do serviço
+        run: gcloud run services describe "${SERVICE_NAME}" --region "${REGION}" --format="value(status.url)"
