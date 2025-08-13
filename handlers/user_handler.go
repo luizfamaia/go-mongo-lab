@@ -31,7 +31,7 @@ func (h *UserHandler) CreateUser(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Usuário inserido com sucesso pra valer a"})
+	c.JSON(http.StatusOK, gin.H{"message": "Usuário inserido com sucesso!!!"})
 }
 
 func (h *UserHandler) UpdateUser(c *gin.Context) {
