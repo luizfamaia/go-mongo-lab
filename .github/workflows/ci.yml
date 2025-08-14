@@ -1,7 +1,10 @@
-name: CI & CD (HA - 4 instâncias)
+name: CI & CD (HA - 4 instâncias auto)
 
 on:
-  workflow_dispatch:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
 
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
@@ -12,12 +15,13 @@ env:
   IMAGE: ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.ARTIFACT_REPO || 'go-microservices' }}/${{ secrets.SERVICE_NAME || 'user-api' }}:${{ github.sha }}
 
 concurrency:
-  group: cd-ha-${{ github.ref }}
+  group: cd-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   test:
     runs-on: ubuntu-latest
+
     services:
       mongo:
         image: mongo:5.0
@@ -26,13 +30,16 @@ jobs:
           --health-interval=10s
           --health-timeout=5s
           --health-retries=5
+
     steps:
       - name: Checkout do código
         uses: actions/checkout@v4
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: "1.22"
+
       - name: Rodar testes
         run: go test ./...
 
@@ -43,31 +50,38 @@ jobs:
       contents: read
       id-token: write
       packages: write
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Autentica com a service account (mesma do seu secret)
       - name: Auth no GCP (service account key)
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
+      # Instala gcloud e define o projeto
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ env.PROJECT_ID }}
           version: 'latest'
 
+      # Configura o Docker para fazer push no Artifact Registry
       - name: Configurar Docker para Artifact Registry
         run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
 
+      # Build local no runner + push (evita Cloud Build/_cloudbuild)
       - name: Docker build
         run: docker build -t "${IMAGE}" .
 
       - name: Docker push
         run: docker push "${IMAGE}"
 
-      # HA: 4 instâncias sempre ativas, 1 req por instância, cpu/mem definidas
+      # Deploy no Cloud Run com HA (4 instâncias ativas, 1 req por instância)
+      # Se você usa uma service account de runtime, adicione:
+      # --service-account "cloudrun-runtime@${{ secrets.GCP_PROJECT_ID }}.iam.gserviceaccount.com"
       - name: Deploy no Cloud Run (HA 4 instâncias)
         run: |
           gcloud run deploy "${SERVICE_NAME}" \
