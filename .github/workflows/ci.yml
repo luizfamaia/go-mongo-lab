@@ -43,8 +43,39 @@ jobs:
       - name: Rodar testes
         run: go test ./...
 
-  deploy:
+  integration:
     needs: test
+    runs-on: ubuntu-latest
+    services:
+      mongo:
+        image: mongo:5.0
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd="mongosh --eval 'db.adminCommand(\"ping\")'"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      # roda SOMENTE os testes de integração (pasta integration/) com a build tag
+      - name: Testes de integração (Mongo real)
+        env:
+          # se quiser apontar pra outro host/porta, altere aqui
+          MONGO_URI: mongodb://localhost:27017
+        run: |
+          go test -tags=integration ./integration -v
+
+
+  deploy:
+    needs: integration
     runs-on: ubuntu-latest
     permissions:
       contents: read
